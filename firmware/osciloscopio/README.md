@@ -10,7 +10,8 @@ Firmware del microcontrolador del proyecto. El ESP32-C6 captura las dos señales
 | Lectura del ADC | Lee GPIO0 y GPIO1 cada 500 ms y los imprime en cuentas y en mV | Verificado (2026-10-30) |
 | ADC en modo continuo (DMA) | 2 canales a frecuencia fija; mide la tasa real cada segundo | Verificado a 1.000, 10.000 y 40.000 Sa/s (2026-10-30) |
 | Captura de ventanas | 256 muestras por canal en arreglos, con arranque y parada del ADC | Verificado a 10.000 Sa/s (2026-10-30) |
-| Presets por comando | 100 / 1.000 / 10.000 Sa/s | Pendiente |
+| Presets de muestreo | 100 (promedio de 10), 1.000, 10.000 y 40.000 Sa/s | Verificado (2026-10-30) |
+| Elegir el preset por SPI | Comando SET_PRESET | Pendiente |
 | SPI esclavo | Protocolo de comandos con la Pi | Pendiente |
 
 ## Hardware
@@ -149,3 +150,32 @@ Montaje: GPIO0 a 3V3 y GPIO1 a GND, a 10.000 Sa/s por canal.
 - Los 69 µs de diferencia (0,3 %) corresponden al arranque del ADC antes de la primera muestra; dentro de la ventana las muestras van a frecuencia constante.
 - Con la entrada fija, el ruido propio del ADC es de unas ±4 cuentas (≈ ±4 mV).
 - Las ventanas consecutivas son coherentes entre sí, lo que confirma que el vaciado del buffer funciona.
+
+## Presets de frecuencia de muestreo (2026-10-30)
+
+El programa actual define los presets en la tabla `PRESETS` de `main/osciloscopio.c`. Como todavía no hay SPI, el programa de prueba los recorre en orden, una ventana por preset; más adelante el comando `SET_PRESET` elegirá cuál usar. Al cambiar de preset, el ADC se libera (`adc_continuous_deinit`) y se configura de nuevo.
+
+| Preset | Por canal | ADC total | Promedio |
+|---|---|---|---|
+| 0 | 100 Sa/s | 2.000 Hz | de 10 muestras |
+| 1 | 1.000 Sa/s | 2.000 Hz | sin promedio |
+| 2 | 10.000 Sa/s | 20.000 Hz | sin promedio |
+| 3 (bonus) | 40.000 Sa/s (40.323 reales) | 80.000 Hz | sin promedio |
+
+**Cómo se logra 100 Sa/s:** el modo continuo no baja de 611 Hz en total, así que se muestrea a 1.000 Sa/s por canal y cada 10 muestras crudas se promedian en una. El resultado mantiene la frecuencia constante, reduce el ruido y funciona como un filtro anti-aliasing sencillo.
+
+### Resultados
+
+Montaje: GPIO0 a 3V3 y GPIO1 a GND.
+
+| Preset | Duración de la ventana | CH0 (3V3) | CH1 (GND) |
+|---|---|---|---|
+| 0 (100 Sa/s) | 2.559.998 µs | 3.351 a 3.354 | 0 a 2 |
+| 1 (1.000 Sa/s) | 255.864 µs | 3.349 a 3.355 | 0 a 3 |
+| 2 (10.000 Sa/s) | 25.686 µs | 3.349 a 3.355 | 0 a 3 |
+| 3 (40.000 Sa/s) | 6.453 µs | 3.346 a 3.354 | 0 a 2 |
+
+### Observaciones
+
+- El promedio reduce el ruido: en el preset 0, CH0 varía 3 cuentas, frente a 6 a 8 en los demás.
+- La duración de la ventana no es una medición precisa de la frecuencia: 256 muestras abarcan 255 intervalos, y se suma un retardo fijo de arranque y entrega de unos 100 a 200 µs. La frecuencia real se midió por conteo en la prueba del modo continuo.
