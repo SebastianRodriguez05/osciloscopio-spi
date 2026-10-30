@@ -9,7 +9,8 @@ Firmware del microcontrolador del proyecto. El ESP32-C6 captura las dos señales
 | Contador | Imprime `Osciloscopio: latido N` por el puerto serie cada segundo | Verificado |
 | Lectura del ADC | Lee GPIO0 y GPIO1 cada 500 ms y los imprime en cuentas y en mV | Verificado (2026-10-30) |
 | ADC en modo continuo (DMA) | 2 canales a frecuencia fija; mide la tasa real cada segundo | Verificado a 1.000, 10.000 y 40.000 Sa/s (2026-10-30) |
-| Presets por comando y ventanas | 100 / 1.000 / 10.000 Sa/s, ventanas de 256 muestras | Pendiente |
+| Captura de ventanas | 256 muestras por canal en arreglos, con arranque y parada del ADC | Verificado a 10.000 Sa/s (2026-10-30) |
+| Presets por comando | 100 / 1.000 / 10.000 Sa/s | Pendiente |
 | SPI esclavo | Protocolo de comandos con la Pi | Pendiente |
 
 ## Hardware
@@ -128,3 +129,23 @@ La primera línea de cada prueba sale un poco más alta (por ejemplo 10.049) por
 - **Alcance de la medición:** la tasa se midió con el reloj interno del ESP32-C6, que sale del mismo cristal de 40 MHz que el ADC. Esto comprueba que el ADC entrega la cantidad de muestras pedida, pero no la exactitud absoluta de la frecuencia. Para eso falta medir una señal de frecuencia conocida generada desde fuera.
 - **Contacto de los jumpers:** en una corrida, CH1 en GND leyó entre 46 y 89 cuentas. Al reacomodar el jumper volvió a 0 a 3, aunque CH0 seguía en 3,3 V, así que la causa era mal contacto y no arrastre entre canales. Para las mediciones finales conviene usar conexiones firmes.
 - **Entradas flotantes:** en modo continuo, un pin sin conectar tiende hacia el voltaje del otro canal, porque el condensador interno del ADC se comparte. La lectura de una entrada sin conectar no tiene significado.
+
+## Captura de ventanas de 256 muestras (2026-10-30)
+
+El programa actual de `main/osciloscopio.c` captura **ventanas**: arranca el ADC en modo continuo, guarda 256 muestras de cada canal en los arreglos `ventana0` (GPIO0) y `ventana1` (GPIO1), detiene el ADC y vacía su buffer interno con `adc_continuous_flush_pool`, para que la siguiente ventana no arrastre muestras viejas. Cada 2 segundos imprime la duración de la captura y el mínimo, el máximo, el promedio y las primeras 8 muestras de cada canal. Esta es la base de lo que la Pi pedirá con `READ_WINDOW`.
+
+### Resultados
+
+Montaje: GPIO0 a 3V3 y GPIO1 a GND, a 10.000 Sa/s por canal.
+
+| Dato | Resultado |
+|---|---|
+| Duración de una ventana | 25.669 µs (esperado 25.600 µs); la primera ventana tardó 25.821 µs |
+| CH0 (3V3) | 3.348 a 3.356 cuentas, promedio 3.352 |
+| CH1 (GND) | 0 a 3 cuentas, promedio 0 |
+
+### Observaciones
+
+- Los 69 µs de diferencia (0,3 %) corresponden al arranque del ADC antes de la primera muestra; dentro de la ventana las muestras van a frecuencia constante.
+- Con la entrada fija, el ruido propio del ADC es de unas ±4 cuentas (≈ ±4 mV).
+- Las ventanas consecutivas son coherentes entre sí, lo que confirma que el vaciado del buffer funciona.
