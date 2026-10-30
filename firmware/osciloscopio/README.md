@@ -52,6 +52,10 @@ El programa (`main/osciloscopio.c`) hace lo siguiente:
 3. Crea una calibración *curve fitting* por canal, que usa los datos de fábrica grabados en el chip para convertir cuentas a milivoltios.
 4. Cada 500 ms lee ambos canales e imprime una línea como esta:
 
+```
+GPIO0=3351 (3333 mV)   GPIO1=1229 (1225 mV)
+```
+
 **Por qué hace falta la calibración:** con atenuación de 12 dB, 4095 cuentas no equivalen a 3,3 V, y la relación entre cuentas y voltaje no es del todo lineal. En esta placa, 3,33 V corresponden a unas 3.352 cuentas, no a ~4.095. Por eso los voltajes se calculan con la calibración y no con una regla de tres.
 
 `main/CMakeLists.txt` declara `REQUIRES esp_adc`, el componente de ESP-IDF que contiene el ADC y la calibración.
