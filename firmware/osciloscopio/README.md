@@ -8,7 +8,8 @@ Firmware del microcontrolador del proyecto. El ESP32-C6 captura las dos señales
 |---|---|---|
 | Contador | Imprime `Osciloscopio: latido N` por el puerto serie cada segundo | Verificado |
 | Lectura del ADC | Lee GPIO0 y GPIO1 cada 500 ms y los imprime en cuentas y en mV | Verificado (2026-10-30) |
-| Muestreo con timer y presets | 100 / 1.000 / 10.000 Sa/s, ventanas de 256 muestras | Pendiente |
+| ADC en modo continuo (DMA) | 2 canales a frecuencia fija; mide la tasa real cada segundo | Verificado a 1.000, 10.000 y 40.000 Sa/s (2026-10-30) |
+| Presets por comando y ventanas | 100 / 1.000 / 10.000 Sa/s, ventanas de 256 muestras | Pendiente |
 | SPI esclavo | Protocolo de comandos con la Pi | Pendiente |
 
 ## Hardware
@@ -43,7 +44,7 @@ Para salir del monitor: `Ctrl+]`.
 
 El archivo `sdkconfig` se genera en cada computador y **no se sube al repositorio** (está en `.gitignore`).
 
-## Lectura del ADC (versión actual)
+## Lectura del ADC en modo oneshot (commit 72596a7)
 
 El programa (`main/osciloscopio.c`) hace lo siguiente:
 
@@ -90,3 +91,40 @@ GPIO0=3351 (3333 mV)   GPIO1=1229 (1225 mV)
 - Muestreo a frecuencia constante con timer o modo continuo (DMA), con presets de 100, 1.000 y 10.000 Sa/s y ventanas de 256 muestras por canal.
 - SPI esclavo en SPI2 (CLK GPIO6, MOSI GPIO7, MISO GPIO2) con el protocolo de comandos `SET_PRESET` 0x01, `START_CAPTURE` 0x02, `STATUS` 0x03 y `READ_WINDOW` 0x04.
 - Reasignar el pin CS: GPIO16 y GPIO17 son UART0 y están conectados al puente CH343 que se usa para programar la placa.
+
+## Prueba del ADC en modo continuo (2026-10-30)
+
+El programa actual de `main/osciloscopio.c` usa el ADC en **modo continuo**: el ADC convierte solo, a una frecuencia fija, alternando entre el canal 0 (GPIO0) y el canal 1 (GPIO1). El DMA deja los resultados en memoria sin intervención del procesador. Cada segundo, el programa cuenta cuántas muestras llegaron de cada canal (usando `esp_timer`) e imprime la tasa medida y el último valor crudo. La frecuencia **total** del ADC se fija con `FREC_TOTAL_HZ` (por defecto 20.000 Hz, es decir, 10.000 Sa/s por canal).
+
+### Límites del modo continuo en el ESP32-C6
+
+Los límites se tomaron de `components/soc/esp32c6/include/soc/soc_caps.h` de ESP-IDF v5.5:
+
+| Constante | Valor | Significado |
+|---|---|---|
+| `SOC_ADC_SAMPLE_FREQ_THRES_LOW` | 611 Hz | Frecuencia total mínima |
+| `SOC_ADC_SAMPLE_FREQ_THRES_HIGH` | 83.333 Hz | Frecuencia total máxima |
+| `SOC_ADC_DIGI_RESULT_BYTES` | 4 | Bytes por muestra en el buffer del DMA |
+| `SOC_ADC_DIGI_MAX_BITWIDTH` | 12 | Resolución en bits |
+
+La frecuencia total se reparte entre los dos canales. Por eso el preset de **100 Sa/s por canal (200 Hz en total) no cabe** en el modo continuo y necesita otra estrategia (por ejemplo, muestrear más rápido y quedarse con una de cada N muestras, o usar un timer con lecturas oneshot).
+
+### Resultados
+
+Montaje: GPIO0 a 3V3 y GPIO1 a GND con jumpers.
+
+| Por canal (pedido) | Total pedido | Medido por canal | CH0 (3V3) | CH1 (GND) |
+|---|---|---|---|---|
+| 1.000 Sa/s | 2.000 Hz | 1.000 Sa/s | ~3.352 cuentas | 0 a 3 cuentas |
+| 10.000 Sa/s | 20.000 Hz | 10.000 Sa/s | ~3.352 cuentas | 0 a 2 cuentas |
+| 40.000 Sa/s (bonus) | 80.000 Hz | **40.323 Sa/s** | ~3.351 cuentas | 0 a 3 cuentas |
+
+La primera línea de cada prueba sale un poco más alta (por ejemplo 10.049) porque incluye muestras que ya estaban en el buffer al arrancar. Desde la segunda línea la tasa es constante.
+
+### Observaciones
+
+- **No se pierden muestras:** la tasa medida nunca quedó por debajo de la pedida.
+- **Por qué 40.323 y no 40.000 (hipótesis):** los tres resultados coinciden con un reloj del ADC de 5 MHz dividido por un número entero. 5 MHz / 2.500 = 2.000 Hz y 5 MHz / 250 = 20.000 Hz son exactos, pero 5 MHz / 62,5 no es entero, el divisor queda en 62 y da 80.645 Hz en total, es decir, 40.323 por canal. Falta confirmarlo en el código del driver de ESP-IDF o en el manual técnico del ESP32-C6. **Consecuencia para el diseño:** el ESP32-C6 debe informar a la Pi la frecuencia de muestreo **real** (por ejemplo en la respuesta a `STATUS`) para que el eje de tiempo del dashboard sea correcto.
+- **Alcance de la medición:** la tasa se midió con el reloj interno del ESP32-C6, que sale del mismo cristal de 40 MHz que el ADC. Esto comprueba que el ADC entrega la cantidad de muestras pedida, pero no la exactitud absoluta de la frecuencia. Para eso falta medir una señal de frecuencia conocida generada desde fuera.
+- **Contacto de los jumpers:** en una corrida, CH1 en GND leyó entre 46 y 89 cuentas. Al reacomodar el jumper volvió a 0 a 3, aunque CH0 seguía en 3,3 V, así que la causa era mal contacto y no arrastre entre canales. Para las mediciones finales conviene usar conexiones firmes.
+- **Entradas flotantes:** en modo continuo, un pin sin conectar tiende hacia el voltaje del otro canal, porque el condensador interno del ADC se comparte. La lectura de una entrada sin conectar no tiene significado.
