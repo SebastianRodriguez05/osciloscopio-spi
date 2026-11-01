@@ -116,3 +116,29 @@ No se debe ejecutar `python3 app.py` a mano mientras el servicio está activo: e
 - La API probada con `curl`: estado, ventana y cambio de preset, sin errores (ver `docs/api-http.md`).
 - Dashboard: con GPIO0 a 3V3 y GPIO1 a GND, a 100 Sa/s, el canal 1 mostró min 3,331 / max 3,336 / prom 3,333 V (Vpp 0,005 V) y el canal 2, min 0,000 / max 0,011 / prom 0,001 V, con 529 ventanas y 0 errores.
 - Arranque autónomo: después de `sudo reboot`, el dashboard volvió a funcionar sin entrar por SSH.
+
+## Verificación de la frecuencia de muestreo con una señal externa (2026-10-31)
+
+Hasta este punto, la frecuencia de muestreo solo se había medido con el reloj del propio ESP32-C6. Para verificarla con una referencia **independiente**, la Pi genera una onda cuadrada con su **PWM por hardware**, cuyo reloj sale del cristal de la Pi, y el osciloscopio la mide.
+
+**Montaje:** pin 12 de la Pi (GPIO18, PWM0) al GPIO0 del ESP32-C6 (canal 1), con tierra común por el cable GND del SPI. Se quita el jumper GPIO0 → 3V3 (si se dejara, habría un cortocircuito cuando el PWM baja a 0 V). GPIO1 sigue en GND.
+
+**Configuración de la Pi:** agregar `dtoverlay=pwm,pin=18,func=2` al final de `/boot/firmware/config.txt` y reiniciar. `pinctrl get 18` debe mostrar `GPIO18 = PWM0`. Esto solo se necesita para esta prueba.
+
+**Programa:** `backend/verificar_fs.py` (con `sudo`, porque escribe en `/sys/class/pwm`). Para cada preset programa una frecuencia de prueba que deja unos 12,8 periodos por ventana, toma 20 ventanas, calcula la frecuencia de la onda a partir de los flancos de subida usando la `fs_real` informada por el ESP32-C6, y la compara con la frecuencia del PWM. Al terminar deja el PWM en 500 Hz y el preset 2.
+
+### Resultados
+
+| Preset | fs_real | Frecuencia del PWM | Frecuencia medida (promedio de 20) | Desviación | Error | Error si se usara la fs nominal |
+|---|---|---|---|---|---|---|
+| 0 | 100,00 Sa/s | 5 Hz | 5,000 Hz | 0,001 Hz | −0,003 % | −0,003 % |
+| 1 | 1.000,00 Sa/s | 50 Hz | 50,000 Hz | 0,000 Hz | 0,000 % | 0,000 % |
+| 2 | 10.000,00 Sa/s | 500 Hz | 499,999 Hz | 0,004 Hz | 0,000 % | 0,000 % |
+| 3 | 40.322,58 Sa/s | 2.000 Hz | 1.999,466 Hz | 1,885 Hz | −0,027 % | −0,826 % |
+
+### Conclusiones
+
+- Las cuatro frecuencias de muestreo son correctas frente a una referencia independiente, con errores de 0,03 % o menos.
+- **Se confirma que el preset 3 muestrea a 40.322,58 Sa/s**, no a 40.000: con la frecuencia real el error es −0,027 %, y con la nominal sería −0,826 %, como predice la hipótesis del reloj del ADC (5 MHz con divisor entero 62). Por eso el protocolo informa la frecuencia real.
+- **Bonus verificado:** la captura de 2 canales a ≥ 40.000 Sa/s funciona de punta a punta (ADC, SPI, backend y dashboard), con la frecuencia comprobada experimentalmente.
+- La desviación es casi nula en los presets 0 a 2 porque las frecuencias de prueba caben un número entero de muestras por periodo, así que todas las ventanas dan el mismo resultado. En el preset 3 caben 20,16 muestras por periodo, y por eso varía entre ventanas; el promedio de 20 ventanas queda dentro del 0,03 %.
