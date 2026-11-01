@@ -46,3 +46,35 @@ Montaje: la Pi y el ESP32-C6 conectados según `docs/protocolo-spi.md` (6 cables
 - A 1 MHz, la transferencia de la ventana (1.036 bytes) alcanza 969 kbit/s, el 97 % del máximo teórico de 1.000 kbit/s.
 - El ciclo completo es más largo que la captura por la transferencia y por el tiempo que el ESP32-C6 dedica a imprimir cada comando en el monitor serie.
 - Aparecieron valores aislados fuera del ruido habitual (±4 cuentas sin la Pi): CH0 llegó a 3.325 en el preset 2 y CH1 a 11 en el preset 0. Es posible que la actividad del SPI durante la captura (consultas de STATUS cada 5 ms) induzca algo de ruido en el ADC. Queda pendiente investigarlo.
+
+## Velocidad máxima del SPI (2026-10-31)
+
+### Teórica
+
+- **Pi (maestro):** `SCLK = core / CDIV`, con CDIV par (BCM2835 ARM Peripherals, registro CLK del SPI). Con el core clock medido de 400 MHz (`vcgencmd measure_clock core`), el máximo es 400 / 2 = **200 MHz**. Como CDIV debe ser par, la Pi genera la frecuencia disponible más cercana por debajo de la pedida (por ejemplo, 16 MHz pedidos dan 15,38 MHz reales).
+- **ESP32-C6 (esclavo):** hasta **40 MHz** según su hoja de datos.
+- **Sistema:** el límite teórico es el menor de los dos, **40 MHz**.
+
+### Experimental
+
+Programa: `sbc/backend/barrido_spi.py`. Para cada frecuencia captura 100 ventanas con el preset 2 y cuenta los errores. Cableado con jumpers según `docs/protocolo-spi.md`.
+
+| Pedido | Real | CDIV | Ventanas OK | Errores | Velocidad efectiva | Eficiencia |
+|---|---|---|---|---|---|---|
+| 1 MHz | 1,00 MHz | 400 | 100 | 0 | 970 kbit/s | 97,0 % |
+| 2 MHz | 2,00 MHz | 200 | 100 | 0 | 1.846 kbit/s | 92,3 % |
+| 4 MHz | 4,00 MHz | 100 | 100 | 0 | 3.431 kbit/s | 85,8 % |
+| 8 MHz | 8,00 MHz | 50 | 100 | 0 | 6.010 kbit/s | 75,1 % |
+| 10 MHz | 10,00 MHz | 40 | 100 | 0 | 7.077 kbit/s | 70,8 % |
+| 16 MHz | 15,38 MHz | 26 | 100 | 0 | 9.391 kbit/s | 61,0 % |
+| 20 MHz | 20,00 MHz | 20 | 100 | 0 | 10.946 kbit/s | 54,7 % |
+| 25 MHz | 25,00 MHz | 16 | 100 | 0 | 12.323 kbit/s | 49,3 % |
+| 32 MHz | 28,57 MHz | 14 | 23 | 28 de marca, el resto en START_CAPTURE | 12.993 kbit/s (solo las buenas) | 45,5 % |
+| 40 MHz | 40,00 MHz | 10 | 0 | Falla desde el primer comando | — | — |
+
+### Conclusiones
+
+- **Límite práctico: 25 MHz** sin errores. La siguiente frecuencia disponible (28,57 MHz, CDIV = 14) ya falla, así que el límite está entre esos dos valores.
+- **Causa del fallo:** a 28,57 MHz la marca llega como `0xD2` en vez de `0xA5`, que son los mismos bits desplazados una posición. La Pi lee cada bit antes de que el ESP32-C6 lo termine de poner en MISO: con 35 ns por bit, el retardo de salida del esclavo más el de los cables ya no cabe. Es un límite de tiempos físicos, inferior al teórico de 40 MHz.
+- **Eficiencia:** baja del 97 % a 1 MHz al 49 % a 25 MHz, porque cada transferencia tiene un tiempo fijo de preparación en Linux que pesa más cuanto más rápido viajan los datos.
+- **Frecuencia de trabajo elegida: 10 MHz** (7 Mbit/s), con un margen amplio frente al límite y mucho más de lo que necesita el osciloscopio: una ventana se transfiere en menos de 1,5 ms.

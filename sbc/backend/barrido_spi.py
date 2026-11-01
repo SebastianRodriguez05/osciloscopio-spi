@@ -34,7 +34,11 @@ def probar(hz, n_ventanas):
     r = {"ok": 0, "marca": 0, "checksum": 0, "timeout": 0, "otro": 0,
          "kbits": [], "reintentos": 0}
     with Osciloscopio(hz=hz) as osc:
-        osc.set_preset(2)
+        try:
+            osc.set_preset(2)
+        except ErrorOsciloscopio:
+            r["otro"] = n_ventanas                 # ni siquiera acepta comandos a esta frecuencia
+            return r
         for _ in range(n_ventanas):
             try:
                 v = osc.capturar()
@@ -64,7 +68,7 @@ def main():
     print(f"Core clock de la Pi: {core / 1e6:.1f} MHz -> SCLK maximo teorico (CDIV=2): {core / 2e6:.1f} MHz")
     print(f"{args.ventanas} ventanas por frecuencia (preset 2)\n")
     print(f"{'Pedido':>7} {'Real':>8} {'CDIV':>5} | {'OK':>4} {'Marca':>5} {'Chksum':>6} {'Timeout':>7} "
-          f"{'Reint':>5} | {'kbit/s prom':>11} {'Eficiencia':>10}")
+          f"{'Otros':>5} {'Reint':>5} | {'kbit/s prom':>11} {'Eficiencia':>10}")
     for mhz in FRECUENCIAS_MHZ:
         pedido = mhz * 1_000_000
         real, cdiv = sclk_real(core, pedido)
@@ -72,7 +76,7 @@ def main():
         prom = sum(r["kbits"]) / len(r["kbits"]) if r["kbits"] else 0
         efic = prom / (real / 1000) * 100 if prom else 0
         print(f"{mhz:>5} M {real / 1e6:>6.2f} M {cdiv:>5} | {r['ok']:>4} {r['marca']:>5} {r['checksum']:>6} "
-              f"{r['timeout']:>7} {r['reintentos']:>5} | {prom:>11.0f} {efic:>9.1f}%")
+              f"{r['timeout']:>7} {r['otro']:>5} {r['reintentos']:>5} | {prom:>11.0f} {efic:>9.1f}%")
         if r["timeout"]:
             print("        (timeout: posible desincronizacion; reinicia el ESP32-C6 antes de seguir)")
             break
