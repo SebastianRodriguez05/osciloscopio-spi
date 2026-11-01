@@ -18,7 +18,7 @@ import time
 
 import gpiod
 import spidev
-from gpiod.line import Bias, Direction, Edge, Value
+from gpiod.line import Bias, Direction, Value
 
 # ---------- Protocolo v1.0 ----------
 MARCA = 0xA5
@@ -51,6 +51,7 @@ class Osciloscopio:
     def __init__(self, bus=0, dispositivo=0, hz=1_000_000, pin_ready=25, timeout_ready=5.0):
         self.pin_ready = pin_ready
         self.timeout_ready = timeout_ready
+        self.reintentos = 0          # lecturas prematuras detectadas y repetidas
 
         self.spi = spidev.SpiDev()
         self.spi.open(bus, dispositivo)          # SPI0, CE0 (GPIO8)
@@ -62,8 +63,7 @@ class Osciloscopio:
         self.ready = gpiod.request_lines(
             buscar_chip_gpio(),
             consumer="osciloscopio",
-            config={pin_ready: gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN,
-                                          edge_detection=Edge.RISING)},
+            config={pin_ready: gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN)},
         )
 
     def cerrar(self):
@@ -85,33 +85,28 @@ class Osciloscopio:
                     f"READY no subio en {self.timeout_ready} s (ESP32-C6 desconectado o sin responder)")
             time.sleep(0.0001)
 
-    def _descartar_flancos(self):
-        while self.ready.wait_edge_events(0):
-            self.ready.read_edge_events()
+    def _comando(self, codigo, argumento, tam_respuesta, max_reintentos=20):
+        """Envia un comando de 4 bytes y lee la respuesta. Devuelve (bytes, segundos de la respuesta).
 
-    def _esperar_flanco_ready(self):
-        """Espera un flanco de subida de READY posterior al comando.
-
-        Mirar solo el nivel no basta: justo despues del comando READY puede seguir en 1
-        unos microsegundos, y la Pi leeria la respuesta antes de que este preparada.
+        Si la Pi lee antes de que el ESP32-C6 prepare la respuesta, recibe solo ceros. Esa lectura
+        no consume nada en el ESP32-C6, asi que se espera un momento y se vuelve a leer.
         """
-        if not self.ready.wait_edge_events(self.timeout_ready):
-            raise ErrorOsciloscopio(
-                f"No llego el flanco de READY en {self.timeout_ready} s (respuesta no preparada)")
-        self.ready.read_edge_events()
-
-    def _comando(self, codigo, argumento, tam_respuesta):
-        """Envia un comando de 4 bytes y lee la respuesta. Devuelve (bytes, segundos de la respuesta)."""
-        self._esperar_ready()                    # ESP32-C6 listo para recibir el comando
-        self._descartar_flancos()                # olvidar flancos viejos
+        self._esperar_ready()
         self.spi.xfer2([codigo, argumento, 0, 0])
-        self._esperar_flanco_ready()             # flanco NUEVO: la respuesta esta lista
-        t0 = time.perf_counter()
-        respuesta = bytes(self.spi.xfer2([0] * tam_respuesta))   # xfer2 recibe una lista nueva
-        duracion = time.perf_counter() - t0
-        if respuesta[0] != MARCA:
-            raise ErrorOsciloscopio(f"Marca invalida: 0x{respuesta[0]:02X} (se esperaba 0xA5)")
-        return respuesta, duracion
+        for intento in range(max_reintentos + 1):
+            time.sleep(0.0002)                   # da tiempo a que READY baje tras el comando
+            self._esperar_ready()
+            t0 = time.perf_counter()
+            respuesta = bytes(self.spi.xfer2([0] * tam_respuesta))   # xfer2 recibe una lista nueva
+            duracion = time.perf_counter() - t0
+            if respuesta[0] == MARCA:
+                return respuesta, duracion
+            if any(respuesta):
+                raise ErrorOsciloscopio(
+                    f"Marca invalida: 0x{respuesta[0]:02X} (se esperaba 0xA5); datos: {respuesta[:8].hex(' ')}")
+            self.reintentos += 1                 # solo ceros: lectura prematura, se repite
+            time.sleep(0.001)
+        raise ErrorOsciloscopio(f"Respuesta vacia tras {max_reintentos} reintentos")
 
     # ---------- Comandos ----------
     @staticmethod
@@ -204,7 +199,8 @@ def main():
                   f"transferencia {v['segundos_transferencia'] * 1000:.2f} ms ({kbits:.0f} kbit/s)")
             print("   " + resumir("CH0", v["ch0"]) + " | " + resumir("CH1", v["ch1"]))
 
-    print(f"Prueba terminada: {fallas} falla(s)")
+        reintentos = osc.reintentos
+    print(f"Prueba terminada: {fallas} falla(s), {reintentos} reintento(s) por lectura prematura")
 
 
 if __name__ == "__main__":
