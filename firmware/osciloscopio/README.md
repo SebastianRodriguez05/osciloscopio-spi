@@ -11,8 +11,8 @@ Firmware del microcontrolador del proyecto. El ESP32-C6 captura las dos señales
 | ADC en modo continuo (DMA) | 2 canales a frecuencia fija; mide la tasa real cada segundo | Verificado a 1.000, 10.000 y 40.000 Sa/s (2026-10-30) |
 | Captura de ventanas | 256 muestras por canal en arreglos, con arranque y parada del ADC | Verificado a 10.000 Sa/s (2026-10-30) |
 | Presets de muestreo | 100 (promedio de 10), 1.000, 10.000 y 40.000 Sa/s | Verificado (2026-10-30) |
-| Elegir el preset por SPI | Comando SET_PRESET | Pendiente |
-| SPI esclavo | Protocolo de comandos con la Pi | Pendiente |
+| Elegir el preset por SPI | Comando SET_PRESET | Verificado con la autoprueba (2026-10-31) |
+| SPI esclavo | Protocolo v1.0 (docs/protocolo-spi.md) con autoprueba al arrancar | Lógica verificada (2026-10-31); falta la prueba física con la Pi |
 
 ## Hardware
 
@@ -95,8 +95,10 @@ GPIO0=3351 (3333 mV)   GPIO1=1229 (1225 mV)
 
 ## Pendientes
 
-- Muestreo a frecuencia constante con timer o modo continuo (DMA), con presets de 100, 1.000 y 10.000 Sa/s y ventanas de 256 muestras por canal.
-- SPI esclavo en SPI2 (CLK GPIO6, MOSI GPIO7, MISO GPIO2) con el protocolo de comandos `SET_PRESET` 0x01, `START_CAPTURE` 0x02, `STATUS` 0x03 y `READ_WINDOW` 0x04.
+- Probar el SPI esclavo con la Pi como maestro y medir la velocidad máxima del reloj sin errores.
+
+
+
 
 
 ## Prueba del ADC en modo continuo (2026-10-30)
@@ -198,3 +200,31 @@ El CS se había propuesto en GPIO16, pero GPIO16 y GPIO17 son el UART0, conectad
 | C | GPIO19 a GPIO18 | GPIO18 sigue a GPIO19 en cada lectura |
 
 **Conclusión:** ambos pines funcionan. El programa de prueba no se conservó en el repositorio.
+
+## SPI esclavo y autoprueba del protocolo (2026-10-31)
+
+El programa actual de `main/osciloscopio.c` es el firmware completo del ESP32-C6. Implementa el **protocolo SPI v1.0**, documentado en `docs/protocolo-spi.md`, con dos tareas de FreeRTOS:
+
+| Tarea | Función |
+|---|---|
+| `spi` | Recibe cada comando de 4 bytes, lo procesa con `procesar_comando()` y entrega la respuesta (STATUS de 16 bytes o VENTANA de 1.036 bytes). La línea READY (GPIO19) sube cuando una transacción está lista en el hardware y baja al terminar, mediante los *callbacks* del driver. |
+| `captura` | Espera `START_CAPTURE`, captura una ventana con el preset actual y arma el paquete con su checksum. |
+
+Los pines MOSI, SCLK y CS tienen *pull-up* interno para que no aparezcan transacciones falsas cuando la Pi no está conectada.
+
+### Autoprueba
+
+Al arrancar, antes de habilitar el SPI, el firmware ejecuta los comandos del protocolo internamente, con la misma función `procesar_comando()` que usa el SPI, y verifica las respuestas. Funciona como prueba unitaria de la lógica del protocolo, sin necesitar la Pi.
+
+**Resultado (GPIO0 a 3V3, GPIO1 a GND): 24 de 24 verificaciones superadas.**
+
+| Verificación | Resultado |
+|---|---|
+| STATUS inicial (marca 0xA5, en espera, preset 2) | Pasa |
+| Comando desconocido, error 1 | Pasa |
+| SET_PRESET con argumento inválido, error 3 | Pasa |
+| READ_WINDOW sin ventana: n_muestras 0 y checksum válido | Pasa |
+| Para cada preset (0 a 3): SET_PRESET, START_CAPTURE, START_CAPTURE repetido (error 2), ventana lista en menos de 5 s, y VENTANA con marca, preset, 256 muestras, fs_real y checksum correctos | Pasa en los 4 presets |
+| Promedios de la ventana | CH0 entre 3.349 y 3.353 cuentas; CH1 entre 0 y 1 |
+
+Sin la Pi conectada, el monitor no muestra transacciones falsas. Falta la prueba física de la comunicación SPI con la Pi como maestro.
