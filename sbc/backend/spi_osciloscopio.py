@@ -18,7 +18,7 @@ import time
 
 import gpiod
 import spidev
-from gpiod.line import Bias, Direction, Value
+from gpiod.line import Bias, Direction, Edge, Value
 
 # ---------- Protocolo v1.0 ----------
 MARCA = 0xA5
@@ -62,7 +62,8 @@ class Osciloscopio:
         self.ready = gpiod.request_lines(
             buscar_chip_gpio(),
             consumer="osciloscopio",
-            config={pin_ready: gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN)},
+            config={pin_ready: gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN,
+                                          edge_detection=Edge.RISING)},
         )
 
     def cerrar(self):
@@ -84,11 +85,27 @@ class Osciloscopio:
                     f"READY no subio en {self.timeout_ready} s (ESP32-C6 desconectado o sin responder)")
             time.sleep(0.0001)
 
+    def _descartar_flancos(self):
+        while self.ready.wait_edge_events(0):
+            self.ready.read_edge_events()
+
+    def _esperar_flanco_ready(self):
+        """Espera un flanco de subida de READY posterior al comando.
+
+        Mirar solo el nivel no basta: justo despues del comando READY puede seguir en 1
+        unos microsegundos, y la Pi leeria la respuesta antes de que este preparada.
+        """
+        if not self.ready.wait_edge_events(self.timeout_ready):
+            raise ErrorOsciloscopio(
+                f"No llego el flanco de READY en {self.timeout_ready} s (respuesta no preparada)")
+        self.ready.read_edge_events()
+
     def _comando(self, codigo, argumento, tam_respuesta):
         """Envia un comando de 4 bytes y lee la respuesta. Devuelve (bytes, segundos de la respuesta)."""
-        self._esperar_ready()
+        self._esperar_ready()                    # ESP32-C6 listo para recibir el comando
+        self._descartar_flancos()                # olvidar flancos viejos
         self.spi.xfer2([codigo, argumento, 0, 0])
-        self._esperar_ready()
+        self._esperar_flanco_ready()             # flanco NUEVO: la respuesta esta lista
         t0 = time.perf_counter()
         respuesta = bytes(self.spi.xfer2([0] * tam_respuesta))   # xfer2 recibe una lista nueva
         duracion = time.perf_counter() - t0
