@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Osciloscopio SPI</title>
+<style>
+  :root {
+    --fondo: #f6f7f9; --panel: #ffffff; --texto: #1d2330; --suave: #5b6475;
+    --rejilla: #e3e6eb; --borde: #d7dbe2; --ch0: #d9480f; --ch1: #1971c2; --error: #c92a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #12151b; --panel: #1b1f27; --texto: #e6e9ef; --suave: #9aa3b2;
+      --rejilla: #2a303b; --borde: #2f3541; --ch0: #ff8a4c; --ch1: #4dabf7; --error: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: var(--fondo); color: var(--texto); }
+  header { padding: 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+           justify-content: space-between; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.2rem; margin: 0; }
+  .controles { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  label { font-size: 0.9rem; color: var(--suave); display: flex; gap: 6px; align-items: center; }
+  select, button { font: inherit; padding: 6px 10px; border: 1px solid var(--borde); border-radius: 6px;
+                   background: var(--panel); color: var(--texto); cursor: pointer; }
+  main { padding: 0 16px 16px; max-width: 1100px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--borde); border-radius: 10px;
+           padding: 12px; margin-bottom: 12px; }
+  canvas { width: 100%; height: 340px; display: block; }
+  .info { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+  .dato { font-size: 0.9rem; color: var(--suave); }
+  .dato b { color: var(--texto); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ch0 { color: var(--ch0); } .ch1 { color: var(--ch1); }
+  #estado.error { color: var(--error); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Osciloscopio SPI · Raspberry Pi Zero 2 W + ESP32-C6</h1>
+  <div class="controles">
+    <label>Muestreo
+      <select id="preset">
+        <option value="0">100 Sa/s</option>
+        <option value="1">1.000 Sa/s</option>
+        <option value="2" selected>10.000 Sa/s</option>
+        <option value="3">40.000 Sa/s (bonus)</option>
+      </select>
+    </label>
+    <label>Refresco
+      <select id="refresco">
+        <option value="1000" selected>1 s</option>
+        <option value="2000">2 s</option>
+        <option value="3000">3 s</option>
+        <option value="4000">4 s</option>
+      </select>
+    </label>
+    <button id="pausa">Pausar</button>
+  </div>
+</header>
+<main>
+  <div class="panel"><canvas id="grafica" aria-label="Gráfica de los dos canales"></canvas></div>
+  <div class="panel info">
+    <div class="dato">Estado: <b id="estado">conectando…</b></div>
+    <div class="dato">Ventana: <b id="ventana">—</b></div>
+    <div class="dato">Frecuencia real: <b id="fs">—</b></div>
+    <div class="dato">Duración de la ventana: <b id="duracion">—</b></div>
+    <div class="dato"><span class="ch0">● Canal 1 (GPIO0)</span>: <b id="stats0">—</b></div>
+    <div class="dato"><span class="ch1">● Canal 2 (GPIO1)</span>: <b id="stats1">—</b></div>
+  </div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("grafica");
+  const V_MAX = 3.4;                 // tope del eje vertical (voltios)
+  let pausado = false, temporizador = null, ultima = null;
+
+  const color = (nombre) => getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
+
+  function formatoTiempo(seg) {
+    return seg < 1 ? (seg * 1000).toFixed(seg < 0.01 ? 2 : 1) + " ms" : seg.toFixed(2) + " s";
+  }
+
+  function estadisticas(v) {
+    let min = Infinity, max = -Infinity, suma = 0;
+    for (const x of v) { if (x < min) min = x; if (x > max) max = x; suma += x; }
+    return `min ${min.toFixed(3)} V · max ${max.toFixed(3)} V · prom ${(suma / v.length).toFixed(3)} V · ` +
+           `Vpp ${(max - min).toFixed(3)} V`;
+  }
+
+  function dibujar(v) {
+    const dpr = window.devicePixelRatio || 1;
+    const ancho = canvas.clientWidth, alto = canvas.clientHeight;
+    canvas.width = ancho * dpr; canvas.height = alto * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, ancho, alto);
+
+    const m = { izq: 52, der: 12, arr: 22, aba: 28 };
+    const w = ancho - m.izq - m.der, h = alto - m.arr - m.aba;
+    const T = (v.n_muestras - 1) / v.fs_real_hz;              // duracion de la ventana (s)
+    const enMs = T < 1, escala = enMs ? 1000 : 1;
+    const px = (i) => m.izq + (i / (v.n_muestras - 1)) * w;
+    const py = (volt) => m.arr + h - (volt / V_MAX) * h;
+
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = color("--rejilla");
+    ctx.fillStyle = color("--suave");
+
+    // Rejilla vertical: 10 divisiones de tiempo
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    for (let k = 0; k <= 10; k++) {
+      const x = m.izq + (k * w) / 10;
+      ctx.beginPath(); ctx.moveTo(x, m.arr); ctx.lineTo(x, m.arr + h); ctx.stroke();
+      const valor = (T * k) / 10 * escala;
+      ctx.fillText(valor.toFixed(valor < 10 ? 2 : 1), x, m.arr + h + 6);
+    }
+    // Rejilla horizontal: cada 0,5 V
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let volt = 0; volt <= 3.0001; volt += 0.5) {
+      const y = py(volt);
+      ctx.beginPath(); ctx.moveTo(m.izq, y); ctx.lineTo(m.izq + w, y); ctx.stroke();
+      ctx.fillText(volt.toFixed(1) + " V", m.izq - 6, y);
+    }
+    ctx.textAlign = "right"; ctx.textBaseline = "top";
+    ctx.fillText(enMs ? "tiempo (ms)" : "tiempo (s)", m.izq + w, 2);
+
+    // Trazas de los dos canales
+    for (const [clave, c] of [["ch0_v", "--ch0"], ["ch1_v", "--ch1"]]) {
+      ctx.strokeStyle = color(c); ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      v[clave].forEach((volt, i) => (i ? ctx.lineTo(px(i), py(volt)) : ctx.moveTo(px(i), py(volt))));
+      ctx.stroke();
+    }
+  }
+
+  function mostrarEstado(texto, esError) {
+    $("estado").textContent = texto;
+    $("estado").classList.toggle("error", esError);
+  }
+
+  async function actualizar() {
+    try {
+      const [rv, rs] = await Promise.all([
+        fetch("/api/window", { cache: "no-store" }),
+        fetch("/api/status", { cache: "no-store" }),
+      ]);
+      const st = await rs.json();
+      if (document.activeElement !== $("preset") && st.preset_pedido !== null) {
+        $("preset").value = String(st.preset_pedido);
+      }
+      if (rv.status === 503) { mostrarEstado("esperando la primera ventana…", false); return; }
+      const v = await rv.json();
+      ultima = v;
+      dibujar(v);
+      $("ventana").textContent = `#${v.numero} · preset ${v.preset} · ` +
+                                 new Date(v.timestamp * 1000).toLocaleTimeString("es-CO");
+      $("fs").textContent = v.fs_real_hz.toLocaleString("es-CO", { maximumFractionDigits: 3 }) +
+                            " Sa/s por canal";
+      $("duracion").textContent = `${formatoTiempo(v.n_muestras / v.fs_real_hz)} (${v.n_muestras} muestras)`;
+      $("stats0").textContent = estadisticas(v.ch0_v);
+      $("stats1").textContent = estadisticas(v.ch1_v);
+      if (st.ultimo_error) mostrarEstado("error: " + st.ultimo_error, true);
+      else if (st.preset_actual !== st.preset_pedido) mostrarEstado("cambiando de preset…", false);
+      else mostrarEstado(`en línea · ${st.n_ventanas} ventanas · ${st.errores} errores`, false);
+    } catch (e) {
+      mostrarEstado("sin conexión con el backend", true);
+    }
+  }
+
+  function programar() {
+    clearInterval(temporizador);
+    if (!pausado) temporizador = setInterval(actualizar, Number($("refresco").value));
+  }
+
+  $("refresco").addEventListener("change", programar);
+  $("pausa").addEventListener("click", () => {
+    pausado = !pausado;
+    $("pausa").textContent = pausado ? "Reanudar" : "Pausar";
+    programar();
+    if (!pausado) actualizar();
+  });
+  $("preset").addEventListener("change", async () => {
+    await fetch("/api/preset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preset: Number($("preset").value) }),
+    });
+    actualizar();
+  });
+  window.addEventListener("resize", () => { if (ultima) dibujar(ultima); });
+
+  actualizar();
+  programar();
+</script>
+</body>
+</html>
