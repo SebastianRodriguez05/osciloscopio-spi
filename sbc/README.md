@@ -79,3 +79,40 @@ Programa: `sbc/backend/barrido_spi.py`. Para cada frecuencia captura 100 ventana
 - **Eficiencia:** baja del 97 % a 1 MHz al 49 % a 25 MHz, porque cada transferencia tiene un tiempo fijo de preparación en Linux que pesa más cuanto más rápido viajan los datos.
 - **Frecuencia de trabajo elegida: 10 MHz** (7 Mbit/s), con un margen amplio frente al límite y mucho más de lo que necesita el osciloscopio: una ventana se transfiere en menos de 1,5 ms.
 - **Repetibilidad:** una segunda corrida completa dio los mismos resultados. De 1 a 25 MHz, 100 de 100 ventanas a todas las frecuencias, con velocidades efectivas que difieren menos del 0,5 %. A 28,57 MHz: 28 ventanas buenas, 28 errores de marca y 44 comandos rechazados (llegaron con los bits desplazados). A 40 MHz, el ESP32-C6 no acepta ningún comando.
+
+## Backend, dashboard y servicio (2026-10-31)
+
+| Componente | Archivo | Función |
+|---|---|---|
+| Backend | `backend/app.py` | Flask en `127.0.0.1:5000`. Un hilo de adquisición es el único que usa el SPI (10 MHz) y guarda la última ventana. API: ver `docs/api-http.md` |
+| Dashboard | `web/index.html` | Página única, sin librerías externas. Dibuja los dos canales con `<canvas>` y tiene selector de preset, refresco de 1 a 4 s y pausa |
+| nginx | `nginx/osciloscopio.conf` | Sirve el dashboard desde `/var/www/osciloscopio` y reenvía `/api/` al backend (proxy inverso) |
+| Servicio | `systemd/osciloscopio-backend.service` | Arranca el backend al encender la Pi y lo reinicia si se cae |
+| Instalación | `instalar.sh` | Instala o actualiza todo lo anterior |
+
+### Instalación o actualización en la Pi
+
+```bash
+git clone https://github.com/SebastianRodriguez05/osciloscopio-spi.git ~/osciloscopio-spi   # solo la primera vez
+cd ~/osciloscopio-spi
+git pull
+bash sbc/instalar.sh
+```
+
+Luego, en un navegador de la misma red: `http://osciloscopio.local` (o la IP de la Pi).
+
+Comandos útiles:
+
+```bash
+systemctl status osciloscopio-backend --no-pager     # estado del backend
+journalctl -u osciloscopio-backend -f               # mensajes del backend en vivo (Ctrl+C para salir)
+sudo systemctl restart osciloscopio-backend          # reiniciar el backend
+```
+
+No se debe ejecutar `python3 app.py` a mano mientras el servicio está activo: el puerto 5000 y la línea GPIO25 solo pueden ser usados por un proceso a la vez.
+
+### Pruebas
+
+- La API probada con `curl`: estado, ventana y cambio de preset, sin errores (ver `docs/api-http.md`).
+- Dashboard: con GPIO0 a 3V3 y GPIO1 a GND, a 100 Sa/s, el canal 1 mostró min 3,331 / max 3,336 / prom 3,333 V (Vpp 0,005 V) y el canal 2, min 0,000 / max 0,011 / prom 0,001 V, con 529 ventanas y 0 errores.
+- Arranque autónomo: después de `sudo reboot`, el dashboard volvió a funcionar sin entrar por SSH.
