@@ -25,6 +25,11 @@ Firmware del microcontrolador del proyecto. El ESP32-C6 captura las dos señales
 |---|---|---|
 | Canal 1 del osciloscopio | GPIO0 (ADC1_CH0) | Entrada analógica, 0 a 3,3 V |
 | Canal 2 del osciloscopio | GPIO1 (ADC1_CH1) | Entrada analógica, 0 a 3,3 V |
+| SPI CLK | GPIO6 | Pin nativo (IO MUX) de SPI2; a la Pi, pin 23 (GPIO11) |
+| SPI MOSI | GPIO7 | Pin nativo (IO MUX) de SPI2; a la Pi, pin 19 (GPIO10) |
+| SPI MISO | GPIO2 | Pin nativo (IO MUX) de SPI2; a la Pi, pin 21 (GPIO9) |
+| SPI CS | GPIO18 | Entrada; a la Pi, pin 24 (GPIO8, CE0) |
+| READY | GPIO19 | Salida, avisa a la Pi que hay una ventana lista; a la Pi, pin 22 (GPIO25) |
 
 **Advertencia:** las entradas analógicas solo admiten de 0 a 3,3 V. Nunca conectar 5 V.
 
@@ -92,7 +97,7 @@ GPIO0=3351 (3333 mV)   GPIO1=1229 (1225 mV)
 
 - Muestreo a frecuencia constante con timer o modo continuo (DMA), con presets de 100, 1.000 y 10.000 Sa/s y ventanas de 256 muestras por canal.
 - SPI esclavo en SPI2 (CLK GPIO6, MOSI GPIO7, MISO GPIO2) con el protocolo de comandos `SET_PRESET` 0x01, `START_CAPTURE` 0x02, `STATUS` 0x03 y `READ_WINDOW` 0x04.
-- Reasignar el pin CS: GPIO16 y GPIO17 son UART0 y están conectados al puente CH343 que se usa para programar la placa.
+
 
 ## Prueba del ADC en modo continuo (2026-10-30)
 
@@ -179,3 +184,17 @@ Montaje: GPIO0 a 3V3 y GPIO1 a GND.
 
 - El promedio reduce el ruido: en el preset 0, CH0 varía 3 cuentas, frente a 6 a 8 en los demás.
 - La duración de la ventana no es una medición precisa de la frecuencia: 256 muestras abarcan 255 intervalos, y se suma un retardo fijo de arranque y entrega de unos 100 a 200 µs. La frecuencia real se midió por conteo en la prueba del modo continuo.
+
+## Asignación de los pines CS y READY (2026-10-31)
+
+El CS se había propuesto en GPIO16, pero GPIO16 y GPIO17 son el UART0, conectado al puente CH343 que se usa para programar la placa y ver el monitor serie. Se descartaron también GPIO0 y GPIO1 (ADC), GPIO2, GPIO6 y GPIO7 (SPI), GPIO4 y GPIO5 (JTAG y ADC), GPIO8, GPIO9 y GPIO15 (pines de arranque o *strapping*) y GPIO12 y GPIO13 (USB nativo). Se eligieron **GPIO18 para el CS** y **GPIO19 para READY**, que son de uso general y no participan en el arranque. Que el CS no use su pin nativo del SPI no afecta la velocidad, que depende del reloj (CLK en GPIO6).
+
+**Prueba:** un programa temporal configuró GPIO19 como salida alternando entre 0 y 1 cada 500 ms, y GPIO18 como entrada con *pull-up* interno.
+
+| Prueba | Conexión | Resultado |
+|---|---|---|
+| A | Nada conectado | GPIO18 = 1 siempre (pull-up) |
+| B | GPIO18 a GND | GPIO18 = 0 siempre |
+| C | GPIO19 a GPIO18 | GPIO18 sigue a GPIO19 en cada lectura |
+
+**Conclusión:** ambos pines funcionan. El programa de prueba no se conservó en el repositorio.
