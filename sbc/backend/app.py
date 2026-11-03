@@ -55,7 +55,10 @@ class Adquisicion(threading.Thread):
                                 raise ErrorOsciloscopio(f"SET_PRESET {pedido} rechazado: {st['error_texto']}")
                             self.preset_actual = pedido
                             log.info("Preset %d (%d Sa/s)", pedido, PRESETS_SA_S[pedido])
-                        v = osc.capturar()
+                        # Sin trafico SPI mientras el ESP32-C6 captura: esperar la duracion de la
+                        # ventana (+10 %) antes de consultar STATUS. Reduce el ruido en el ADC (V3).
+                        duracion = 256 / PRESETS_SA_S[self.preset_actual]
+                        v = osc.capturar(espera_inicial=duracion * 1.1)
                         ventana = {
                             "numero": self.n_ventanas + 1,
                             "timestamp": time.time(),

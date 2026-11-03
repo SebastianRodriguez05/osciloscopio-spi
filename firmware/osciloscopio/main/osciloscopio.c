@@ -65,6 +65,7 @@ static volatile uint8_t  ultimo_error = ERR_OK;
 static volatile uint16_t n_ventana = 0;
 static volatile bool     ventana_valida = false;
 static TaskHandle_t      tarea_captura = NULL;
+static volatile bool     captura_pendiente = false;   // START recibido; se dispara despues de responder
 
 static adc_continuous_handle_t adc = NULL;
 static int preset_configurado = -1;
@@ -211,7 +212,7 @@ static void procesar_comando(uint8_t cmd, uint8_t arg, const uint8_t **resp, siz
             ventana_valida = false;
             estado = ESTADO_CAPTURANDO;
             ultimo_error = ERR_OK;
-            xTaskNotifyGive(tarea_captura);
+            captura_pendiente = true;          // la captura empieza despues de entregar la respuesta
         }
         break;
     case CMD_STATUS:
@@ -251,6 +252,16 @@ static void tarea_captura_fn(void *arg)
         n_ventana++;
         ventana_valida = true;
         estado = ESTADO_LISTA;
+    }
+}
+
+// Inicia la captura pendiente. Se llama despues de entregar la respuesta de START_CAPTURE,
+// para que ninguna transferencia SPI ocurra mientras el ADC muestrea (reduce el ruido).
+static void disparar_captura_si_pendiente(void)
+{
+    if (captura_pendiente) {
+        captura_pendiente = false;
+        xTaskNotifyGive(tarea_captura);
     }
 }
 
@@ -320,6 +331,7 @@ static void tarea_spi_fn(void *arg)
         t.tx_buffer = resp;
         t.rx_buffer = NULL;
         ESP_ERROR_CHECK(spi_slave_transmit(SPI2_HOST, &t, portMAX_DELAY));
+        disparar_captura_si_pendiente();
     }
 }
 
@@ -363,6 +375,7 @@ static void autoprueba(void)
         VERIFICAR(r[3] == ERR_OK && r[2] == p, "SET_PRESET aceptado");
         procesar_comando(CMD_START_CAPTURE, 0, &r, &n);
         VERIFICAR(r[3] == ERR_OK && r[1] == ESTADO_CAPTURANDO, "START_CAPTURE -> capturando");
+        disparar_captura_si_pendiente();
         procesar_comando(CMD_START_CAPTURE, 0, &r, &n);
         bool ocupado_ok = (r[3] == ERR_OCUPADO) || (estado == ESTADO_LISTA);  // el preset 3 puede terminar muy rapido
         VERIFICAR(ocupado_ok, "START_CAPTURE repetido -> error 2 (o ya termino)");
