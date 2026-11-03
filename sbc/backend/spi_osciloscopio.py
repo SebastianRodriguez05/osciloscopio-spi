@@ -153,16 +153,21 @@ class Osciloscopio:
             "segundos_transferencia": duracion,
         }
 
-    def capturar(self, timeout=6.0):
-        """Secuencia completa: START_CAPTURE, esperar ventana lista y READ_WINDOW."""
+    def capturar(self, timeout=6.0, espera_inicial=0.0, intervalo=0.005):
+        """Secuencia completa: START_CAPTURE, esperar ventana lista y READ_WINDOW.
+
+        espera_inicial: segundos sin trafico SPI antes de empezar a consultar STATUS.
+        intervalo: segundos entre consultas de STATUS.
+        """
         st = self.start_capture()
         if st["error"] != 0:
             raise ErrorOsciloscopio(f"START_CAPTURE rechazado: {st['error_texto']}")
+        time.sleep(espera_inicial)
         limite = time.monotonic() + timeout
         while self.status()["estado"] != 2:
             if time.monotonic() > limite:
                 raise ErrorOsciloscopio("La ventana no quedo lista a tiempo")
-            time.sleep(0.005)
+            time.sleep(intervalo)
         return self.read_window()
 
 
