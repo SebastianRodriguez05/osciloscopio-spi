@@ -30,6 +30,7 @@ Versión 1.0 (2026-11-02). Relaciona cada requerimiento con su método de verifi
 | V7 | Arranque autónomo | `sudo reboot` y apertura del dashboard sin SSH | El sistema vuelve a funcionar sin intervención | Funcionó | ✅ | `sbc/README.md` |
 | V8 | API HTTP | `curl` a `/api/status`, `/api/window` y `/api/preset` | Respuestas según el contrato; cambio de preset aplicado | Respuestas correctas; el preset cambió en menos de 4 s, sin errores | ✅ | `docs/api-http.md` |
 | V9 | Recuperación del backend si el ESP32-C6 deja de responder | Mantener presionado el botón RST del ESP32-C6 durante 10 s con el backend corriendo, observando el registro del backend (`journalctl`), el monitor del ESP32-C6 y el dashboard | El backend informa el error, no se cae y se recupera solo | Mientras el ESP32-C6 estuvo en reinicio, el backend registró `READY no subio` y reintentó cada 6 s. Al arrancar el ESP32-C6, una transacción quedó desfasada (`comando desconocido`); el backend reabrió el SPI y se recuperó en ~1 s. Estado final: preset 2, sin error | ✅ | Este documento (sección 4) |
+| V10 | Pruebas automáticas del driver y del backend | `python3 -m pytest tests/sbc` contra el simulador del ESP32-C6 (sin hardware), incluyendo inyección de fallas | Todas las pruebas pasan | 28 de 28 en 1,7 s | ✅ | `tests/sbc`, `sbc/README.md` |
 
 ## 3. Detalle de R5: periodo de refresco del dashboard
 

@@ -14,12 +14,17 @@ Uso: python3 app.py   (escucha en 127.0.0.1:5000; nginx lo publica en /api/)
 """
 
 import logging
+import os
 import threading
 import time
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
-from spi_osciloscopio import PRESETS_SA_S, ErrorOsciloscopio, Osciloscopio
+if os.environ.get("OSC_SIMULADOR") == "1":      # modo sin hardware: simulador del ESP32-C6
+    import simulador_esp32
+    simulador_esp32.activar()
+
+from spi_osciloscopio import PRESETS_SA_S, ErrorOsciloscopio, Osciloscopio  # noqa: E402
 
 SPI_HZ = 10_000_000              # reloj de trabajo (limite medido sin errores: 25 MHz)
 PERIODO_MIN_S = 0.25             # como maximo 4 ventanas por segundo
@@ -39,14 +44,15 @@ class Adquisicion(threading.Thread):
         self.n_ventanas = 0
         self.errores = 0
         self.ultimo_error = None
+        self.detener = threading.Event()   # permite detener el hilo (pruebas)
 
     def run(self):
-        while True:
+        while not self.detener.is_set():
             try:
                 with Osciloscopio(hz=SPI_HZ) as osc:
                     log.info("SPI abierto a %.1f MHz", SPI_HZ / 1e6)
                     self.preset_actual = None
-                    while True:
+                    while not self.detener.is_set():
                         t0 = time.monotonic()
                         pedido = self.preset_pedido
                         if pedido != self.preset_actual:
@@ -76,12 +82,12 @@ class Adquisicion(threading.Thread):
                             self.ultimo_error = None
                         espera = PERIODO_MIN_S - (time.monotonic() - t0)
                         if espera > 0:
-                            time.sleep(espera)
+                            self.detener.wait(espera)
             except ErrorOsciloscopio as e:
                 self.errores += 1
                 self.ultimo_error = str(e)
                 log.warning("Error de comunicacion: %s (se reintenta en 1 s)", e)
-                time.sleep(1.0)
+                self.detener.wait(1.0)
 
 
 app = Flask(__name__)
@@ -120,6 +126,17 @@ def api_preset():
     return jsonify({"ok": True, "preset_pedido": preset, "sa_s": PRESETS_SA_S[preset]})
 
 
+WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
+
+
+@app.get("/")
+def index():
+    """Sirve el dashboard directamente (util en modo simulador, sin nginx)."""
+    return send_from_directory(WEB, "index.html")
+
+
 if __name__ == "__main__":
     adq.start()
-    app.run(host="127.0.0.1", port=5000, threaded=True)
+    # Por defecto solo local (en la Pi, nginx es la entrada). En un PC de desarrollo,
+    # OSC_HOST=0.0.0.0 permite abrir el dashboard desde otro equipo (por ejemplo, Windows -> WSL).
+    app.run(host=os.environ.get("OSC_HOST", "127.0.0.1"), port=5000, threaded=True)

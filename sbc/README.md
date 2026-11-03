@@ -142,3 +142,36 @@ Hasta este punto, la frecuencia de muestreo solo se había medido con el reloj d
 - **Se confirma que el preset 3 muestrea a 40.322,58 Sa/s**, no a 40.000: con la frecuencia real el error es −0,027 %, y con la nominal sería −0,826 %, como predice la hipótesis del reloj del ADC (5 MHz con divisor entero 62). Por eso el protocolo informa la frecuencia real.
 - **Bonus verificado:** la captura de 2 canales a ≥ 40.000 Sa/s funciona de punta a punta (ADC, SPI, backend y dashboard), con la frecuencia comprobada experimentalmente.
 - La desviación es casi nula en los presets 0 a 2 porque las frecuencias de prueba caben un número entero de muestras por periodo, así que todas las ventanas dan el mismo resultado. En el preset 3 caben 20,16 muestras por periodo, y por eso varía entre ventanas; el promedio de 20 ventanas queda dentro del 0,03 %.
+
+## Simulador del ESP32-C6 y pruebas automáticas (2026-11-02)
+
+### Simulador: `backend/simulador_esp32.py`
+
+Reproduce el protocolo SPI v1.1 byte a byte, igual que el firmware: marca 0xA5, estados, códigos de error, fs real, checksum y la captura que empieza después de responder START_CAPTURE. Genera señales de prueba: una **cuadrada de 500 Hz** en CH0 (0 a 3.352 cuentas) y una **senoidal de 50 Hz** en CH1. Reemplaza los módulos `spidev` y `gpiod` por versiones falsas conectadas al simulador, así que el **driver y el backend reales** funcionan sin hardware.
+
+Permite inyectar fallas: `desconectado` (READY nunca sube), `lecturas_vacias` (lecturas prematuras), `marca_invalida_proxima` y `corromper_proxima_ventana` (checksum incorrecto).
+
+**Backend sin hardware (para desarrollar en cualquier PC con Python 3 y Flask):**
+
+```bash
+cd sbc/backend
+OSC_SIMULADOR=1 OSC_HOST=0.0.0.0 python3 app.py
+```
+
+Luego se abre `http://127.0.0.1:5000` en el navegador. En WSL, desde Windows se usa la IP de Ubuntu (`hostname -I`), por ejemplo `http://172.18.82.100:5000`. `OSC_HOST` es opcional: por defecto el backend escucha solo en `127.0.0.1`, que es lo correcto en la Pi, donde nginx es la entrada.
+
+### Pruebas automáticas: `tests/sbc` (pytest)
+
+```bash
+sudo apt install -y python3-pytest python3-flask    # una sola vez
+python3 -m pytest tests/sbc -v                       # desde la raíz del repositorio
+```
+
+Se ejecutan en cualquier PC, sin hardware, contra el simulador. Si se trabaja con ESP-IDF, deben ejecutarse en una terminal **sin** `get_idf`, para usar el Python del sistema.
+
+| Archivo | Casos | Qué verifica |
+|---|---|---|
+| `test_driver.py` | 19 | Estado inicial; los 4 presets y su fs real; preset inválido (error 3); comando desconocido (error 1); ventana vacía; captura en cada preset; START repetido (error 2); detección de checksum corrupto y de marca inválida; reintento de lecturas prematuras; timeout con el ESP32-C6 desconectado; frecuencia de la señal medida a partir de las muestras (500 Hz en el preset 2, 2.000 Hz en el preset 3) |
+| `test_backend.py` | 9 | 503 antes de la primera ventana; `/api/status`; `/api/window` en voltios; cambio de preset aplicado; 4 cuerpos inválidos rechazados con 400; el dashboard servido en `/` |
+
+**Resultado (2026-11-02): 28 de 28 pruebas superadas en 1,7 s.** Junto con la autoprueba del firmware (24 verificaciones al arrancar el ESP32-C6), cubren las pruebas unitarias de los dos lados.
