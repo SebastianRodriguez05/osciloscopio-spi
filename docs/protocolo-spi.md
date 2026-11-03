@@ -1,6 +1,6 @@
 # Protocolo SPI entre la Raspberry Pi y el ESP32-C6
 
-Versión 1.0 (2026-10-31). Este documento es la referencia común para el firmware del ESP32-C6, el driver SPI de la Pi y el simulador en Python. Cualquier cambio al protocolo se hace primero aquí.
+Versión 1.1 (2026-11-02). Cambio respecto a la 1.0: la captura empieza después de responder START_CAPTURE, y se recomienda no consultar STATUS durante la captura. Este documento es la referencia común para el firmware del ESP32-C6, el driver SPI de la Pi y el simulador en Python. Cualquier cambio al protocolo se hace primero aquí.
 
 ## Conexión física
 
@@ -65,7 +65,7 @@ El preset por defecto al arrancar es el **2 (10.000 Sa/s)**.
 ### Comportamiento
 
 - **SET_PRESET:** cambia el preset. Se rechaza con error 2 si hay una captura en curso, y con error 3 si el argumento no está entre 0 y 3.
-- **START_CAPTURE:** inicia la captura de una ventana con el preset actual y responde de inmediato (estado 1). Si ya hay una captura en curso, responde con error 2.
+- **START_CAPTURE:** prepara la captura de una ventana con el preset actual y responde de inmediato (estado 1). La captura **empieza después de entregar la respuesta**, para que ninguna transferencia SPI coincida con el muestreo. Si ya hay una captura en curso, responde con error 2.
 - **STATUS:** solo informa el estado; no cambia nada.
 - **READ_WINDOW:** entrega la última ventana completa. La ventana sigue disponible hasta el siguiente START_CAPTURE, así que se puede leer más de una vez. Si no hay ninguna ventana completa, responde con n_muestras = 0 y los datos en cero.
 
@@ -73,7 +73,7 @@ El preset por defecto al arrancar es el **2 (10.000 Sa/s)**.
 
 1. SET_PRESET (solo si cambió el preset).
 2. START_CAPTURE.
-3. STATUS repetido hasta que estado = 2 (ventana lista).
+3. Esperar la duración de la ventana más un 10 % **sin tráfico SPI**, y luego consultar STATUS hasta que estado = 2 (ventana lista). Consultar durante la captura introduce ruido en el ADC (ver `docs/matriz-verificacion.md`, V3).
 4. READ_WINDOW.
 5. Volver al punto 2 para la siguiente ventana.
 

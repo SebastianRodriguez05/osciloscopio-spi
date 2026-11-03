@@ -23,7 +23,7 @@ Versión 1.0 (2026-11-02). Relaciona cada requerimiento con su método de verifi
 |---|---|---|---|---|---|---|
 | V1 | El ADC lee los dos canales y son independientes | Cada canal flotante, a GND y a 3V3, con el otro sin conectar | GND ≈ 0; 3V3 ≈ 3,3 V; el otro canal no cambia | GND: 0 a 3 cuentas. 3V3: 3.333 mV. El otro canal siguió flotando | ✅ | `firmware/osciloscopio/README.md` |
 | V2 | Exactitud del ADC con la calibración de fábrica | Lectura del pin 3V3 de la placa | Dentro de ±40 mV (hoja de datos) | 3.333 mV frente a 3,3 V nominales (+33 mV) | ⚠️ | `firmware/osciloscopio/README.md` |
-| V3 | Ruido del ADC con la entrada fija | Mínimo y máximo de las ventanas | Documentar el valor | Sin la Pi: ±4 cuentas (≈ ±4 mV). En la integración aparecieron valores aislados de hasta 27 cuentas | ⚠️ | `firmware/osciloscopio/README.md`, `sbc/README.md` |
+| V3 | Ruido del ADC sin interferencia del SPI | `ruido_spi.py`: 50 ventanas por modo en CH1 (GPIO1 a GND), con y sin tráfico SPI durante la captura | Sin muestras fuera del ruido propio del ADC (> 5 cuentas) | Se detectó que el tráfico SPI durante la captura induce picos de hasta 224 cuentas. Corregido (captura sin tráfico SPI): máximo 4–5 cuentas y 0 muestras > 5 en los presets 2 y 3 | ✅ | Este documento (sección 5) |
 | V4 | Pines CS (GPIO18) y READY (GPIO19) | Programa temporal: salida en GPIO19 y entrada con pull-up en GPIO18, sin conexión, a GND y unidos entre sí | Lecturas según cada conexión | Las tres pruebas correctas | ✅ | `firmware/osciloscopio/README.md` |
 | V5 | Lógica del protocolo en el firmware (prueba unitaria) | Autoprueba al arrancar: comandos internos con la misma función que usa el SPI | 24 de 24 verificaciones | 24 de 24 | ✅ | `firmware/osciloscopio/README.md` |
 | V6 | Sincronización con la línea READY | Integración y barrido después de la corrección del driver (pausa de 0,2 ms y reintento) | Sin errores por lecturas prematuras | 0 errores y 0 reintentos a 1 MHz; 0 errores entre 1 y 25 MHz | ✅ | `sbc/README.md` |
@@ -61,7 +61,39 @@ En el monitor del ESP32-C6 se vio el mismo desfase como `SPI: cmd=0x00 arg=0 -> 
 
 **Recomendación para la presentación:** los cables jumper se sueltan con facilidad; conviene revisarlos antes de empezar y fijarlos con cinta.
 
-## 5. Pendientes
+## 5. Detalle de V3: ruido del ADC por el tráfico SPI (2026-11-02)
+
+**Hipótesis:** en la integración aparecieron valores aislados fuera del ruido normal. La sospecha era que las consultas de STATUS cada 5 ms durante la captura (reloj SPI de 10 MHz, por cables jumper cercanos a las entradas analógicas) inducían ruido en el ADC.
+
+**Método:** `sbc/backend/ruido_spi.py` compara dos modos, con 50 ventanas cada uno. En el modo **rápido**, la Pi consulta STATUS cada 5 ms mientras el ESP32-C6 captura. En el modo **silencio**, espera 1,5 veces la duración de la ventana antes de consultar. Se mide el ruido en CH1 (GPIO1 a GND con un jumper local del ESP32-C6).
+
+**Primera medición (firmware original):**
+
+| Preset | Modo | CH1 máx | Desviación promedio | Muestras > 5 cuentas |
+|---|---|---|---|---|
+| 2 | Rápido | 224 | 1,33 | 13 |
+| 2 | Silencio | 17 | 0,61 | 3 |
+| 3 | Rápido | 99 | 1,18 | 18 |
+| 3 | Silencio | 64 | 0,65 | 5 |
+
+Hipótesis confirmada. En modo silencio aún quedaban picos porque la respuesta de START_CAPTURE se transfería justo cuando el ESP32-C6 empezaba a muestrear, lo que pesa sobre todo en el preset 3 (ventana de 6,35 ms).
+
+**Corrección:**
+
+1. **Firmware:** al recibir START_CAPTURE, el ESP32-C6 solo marca la captura como pendiente y la inicia **después** de entregar la respuesta (`disparar_captura_si_pendiente()`).
+2. **Backend:** después de START_CAPTURE espera la duración de la ventana más un 10 % antes de consultar STATUS, así que no hay tráfico SPI durante la captura.
+
+**Medición después de la corrección:**
+
+| Preset | Modo | CH1 máx | Desviación promedio | Muestras > 5 cuentas |
+|---|---|---|---|---|
+| 2 | Rápido (control) | 80 | 0,87 | 7 |
+| 2 | Silencio (comportamiento del backend) | 4 | 0,62 | 0 |
+| 3 | Rápido (control) | 63 | 0,74 | 7 |
+| 3 | Silencio (comportamiento del backend) | 5 | 0,56 | 0 |
+
+**Conclusión:** sin tráfico SPI durante la captura, el ruido queda en el nivel propio del ADC (±4–5 cuentas, igual que sin la Pi conectada) y no aparece ninguna muestra fuera de lo normal en 100 ventanas. El modo rápido, que se mantiene como control, confirma que el ruido aparece en cuanto hay tráfico SPI durante el muestreo. La señal de CH0 viene por un cable desde la Pi, paralelo a los del SPI, y muestra más variación (hasta ~100 cuentas) en ambos modos: es acople en ese cable, no del ADC.
+
+## 6. Pendientes
 
 - **V2:** medir el pin 3V3 con un multímetro, para saber si los +33 mV son error del ADC o el voltaje real de la placa.
-- **V3:** investigar si la actividad del SPI durante la captura induce ruido en el ADC.
