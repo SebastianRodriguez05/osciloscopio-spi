@@ -29,7 +29,7 @@ Versión 1.0 (2026-11-02). Relaciona cada requerimiento con su método de verifi
 | V6 | Sincronización con la línea READY | Integración y barrido después de la corrección del driver (pausa de 0,2 ms y reintento) | Sin errores por lecturas prematuras | 0 errores y 0 reintentos a 1 MHz; 0 errores entre 1 y 25 MHz | ✅ | `sbc/README.md` |
 | V7 | Arranque autónomo | `sudo reboot` y apertura del dashboard sin SSH | El sistema vuelve a funcionar sin intervención | Funcionó | ✅ | `sbc/README.md` |
 | V8 | API HTTP | `curl` a `/api/status`, `/api/window` y `/api/preset` | Respuestas según el contrato; cambio de preset aplicado | Respuestas correctas; el preset cambió en menos de 4 s, sin errores | ✅ | `docs/api-http.md` |
-| V9 | Recuperación del backend si se desconecta el ESP32-C6 | Desconectar y reconectar el ESP32-C6 con el backend corriendo | El backend informa el error y se recupera solo | No probado | ⏳ | — |
+| V9 | Recuperación del backend si el ESP32-C6 deja de responder | Mantener presionado el botón RST del ESP32-C6 durante 10 s con el backend corriendo, observando el registro del backend (`journalctl`), el monitor del ESP32-C6 y el dashboard | El backend informa el error, no se cae y se recupera solo | Mientras el ESP32-C6 estuvo en reinicio, el backend registró `READY no subio` y reintentó cada 6 s. Al arrancar el ESP32-C6, una transacción quedó desfasada (`comando desconocido`); el backend reabrió el SPI y se recuperó en ~1 s. Estado final: preset 2, sin error | ✅ | Este documento (sección 4) |
 
 ## 3. Detalle de R5: periodo de refresco del dashboard
 
@@ -44,8 +44,24 @@ nginx registra cada petición a `/api/` con la hora en milisegundos (`$msec`) en
 
 **Observación:** con 4 s el promedio fue 4,010 s (0,249 Hz), un 0,25 % por debajo del límite de 0,25 Hz. El enunciado fija exactamente 4 s como límite, y los temporizadores del navegador varían decenas de milisegundos entre actualizaciones, así que el promedio puede quedar a uno u otro lado. Se considera que cumple dentro de la tolerancia del ±1 %.
 
-## 4. Pendientes
+## 4. Detalle de V9: recuperación ante fallos del ESP32-C6 (2026-11-02)
+
+**Primera prueba (con un fallo de cableado).** Al presionar el botón RST se soltó sin querer el cable de READY (GPIO19 del ESP32-C6 al pin 22 de la Pi). El backend registró `READY no subio en 5.0 s (ESP32-C6 desconectado o sin responder)` cada 6 s, el dashboard mostró el error y el servidor siguió funcionando. Al abrir el monitor del ESP32-C6 se vio que el microcontrolador funcionaba normalmente; la causa era el cable. Al reconectarlo, el sistema se recuperó solo. Este fallo muestra que el sistema **informa con claridad** una conexión rota y **se recupera** al corregirla.
+
+**Prueba repetida (cableado firme).** Registro del backend:
+
+| Hora | Mensaje | Interpretación |
+|---|---|---|
+| 22:02:49 | `WARNING READY no subio en 5.0 s` | ESP32-C6 en reinicio (botón presionado) |
+| 22:02:50 | `INFO SPI abierto a 10.0 MHz` | El backend reintenta |
+| 22:02:55 | `WARNING SET_PRESET 2 rechazado: comando desconocido` | El ESP32-C6 ya arrancó; una transacción quedó desfasada porque el reinicio cortó un comando a la mitad |
+| 22:02:56 | `INFO SPI abierto a 10.0 MHz` y `INFO Preset 2 (10000 Sa/s)` | Resincronizado y funcionando |
+
+En el monitor del ESP32-C6 se vio el mismo desfase como `SPI: cmd=0x00 arg=0 -> error=1` justo después de la autoprueba, seguido de comandos normales. Estado final con `curl`: `preset_actual: 2`, `ultimo_error: null`.
+
+**Recomendación para la presentación:** los cables jumper se sueltan con facilidad; conviene revisarlos antes de empezar y fijarlos con cinta.
+
+## 5. Pendientes
 
 - **V2:** medir el pin 3V3 con un multímetro, para saber si los +33 mV son error del ADC o el voltaje real de la placa.
 - **V3:** investigar si la actividad del SPI durante la captura induce ruido en el ADC.
-- **V9:** probar la recuperación del backend al desconectar y reconectar el ESP32-C6.
