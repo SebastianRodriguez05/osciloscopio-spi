@@ -8,6 +8,8 @@ Segundo proyecto del curso, Ingeniería Electrónica, Universidad Nacional de Co
 Señales ──► ESP32-C6 (ADC + DMA) ──SPI──► Raspberry Pi (driver + backend + nginx) ──WiFi──► Navegador
 ```
 
+**Video del funcionamiento:** PENDIENTE_VIDEO
+
 ## Resultados principales
 
 | Característica | Resultado |
