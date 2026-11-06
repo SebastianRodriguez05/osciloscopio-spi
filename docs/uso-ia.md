@@ -72,5 +72,4 @@ Si algún integrante usó otra herramienta de IA por su cuenta, debe agregarla e
 
 Los chats con la IA se encuentran en los siguientes enlaces:
 
-- PEGA_AQUI_EL_ENLACE
 - Conversación principal del proyecto (Claude Opus 5.5): https://claude.ai/share/25a8f465-ee3c-4cf5-80ef-676e27e718c9
