@@ -17,6 +17,17 @@ El proyecto se desarrolló de forma **colaborativa, en sesiones de trabajo conju
 
 **Commits:** la mayoría de los commits se hicieron desde la cuenta de GitHub de Sebastián Rodríguez López (SebastianRodriguez05), porque las sesiones fueron conjuntas en un mismo computador.
 
+## Correspondencia con las tareas del enunciado
+
+| Tarea del enunciado | Responsable | Evidencia |
+|---|---|---|
+| Coordinación de repositorios | Sebastián Rodríguez López | Historial de commits, `README.md`, `docs/` |
+| Escritura del código y configuración de servicios en el SBC (software) | Mateo Palacios López | `sbc/backend/app.py`, `sbc/nginx/`, `sbc/systemd/`, `sbc/instalar.sh` |
+| Escritura de código y pruebas preliminares del microcontrolador (firmware) | Santiago Alzate Serna | `firmware/osciloscopio/` |
+| Diseño de experimentos y construcción de la matriz de verificación | Mateo Duque Gaviria y Jhojan Andrey Buritica | `docs/matriz-verificacion.md`, `barrido_spi.py`, `verificar_fs.py`, `medir_refresco.py`, `ruido_spi.py` |
+| Ejecución de pruebas unitarias en SBC y microcontrolador | Jhojan Andrey Buritica | Autoprueba del firmware (24 verificaciones), `tests/sbc/` (28 pruebas) |
+| Ejecución de pruebas de integración | William Camilo Obando | Pruebas de integración en `sbc/README.md`, dashboard en vivo, video |
+
 ## Detalle por área
 
 ### Sebastián Rodríguez López: líder, coordinación y documentación
